@@ -559,19 +559,47 @@ namespace tsto::events {
         current_event.name = "Normal Play";
         current_event.start_time = std::time(nullptr); // Current time
         current_event.end_time = 4070908800;   // January 1, 2099 00:00:00 UTC
-
         current_event.is_active = true;
 
         if (current_event_override != 0) {
-            auto it = tsto_events.find(current_event_override);
-            if (it != tsto_events.end()) {
+            time_t current_time = std::time(nullptr);
+            time_t elapsed = 0;
+
+            // Calculate real time passed since we set the event
+            if (event_reference_time > 0) {
+                elapsed = current_time - event_reference_time;
+                if (elapsed < 0) elapsed = 0;
+            }
+
+            // Apply elapsed time to the original historic event time to track progression
+            time_t sim_historic_time = current_event_override + elapsed;
+
+            // O(log N) lookup: find the first event strictly greater than the simulated historical time
+            auto it = tsto_events.upper_bound(sim_historic_time);
+
+            if (it != tsto_events.begin()) {
+                // The active historical event is the one right before the upper bound
+                --it;
+
                 current_event.name = it->second;
 
-                current_event.start_time = (event_start_time_override != 0) ? event_start_time_override : it->first;
+                // Keep the spoofed current-day start time but apply the elapsed duration,
+                // plus any duration difference if we actually transitioned into a newer event.
+                time_t event_offset_from_override = it->first - current_event_override;
 
-                current_event.end_time = (std::next(it) != tsto_events.end()) ? std::next(it)->first : it->first + (30 * 24 * 60 * 60);
-                current_event.is_active = true;
-                return current_event;
+                if (event_start_time_override != 0) {
+                    current_event.start_time = event_start_time_override + event_offset_from_override;
+                } else {
+                    current_event.start_time = it->first;
+                }
+
+                // Calculate the end time properly (based on the duration of the current simulated event)
+                auto next_it = std::next(it);
+                time_t duration = (next_it != tsto_events.end())
+                                    ? (next_it->first - it->first)
+                                    : (30 * 24 * 60 * 60); // 30 days default
+
+                current_event.end_time = current_event.start_time + duration;
             }
         }
 
